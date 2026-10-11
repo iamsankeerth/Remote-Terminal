@@ -1,11 +1,11 @@
-﻿import { test } from 'node:test';
+import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { WebSocket } from 'ws';
-import { TmuxManager, makeInternalName } from '../../src/terminal/tmuxManager.js';
+import { TmuxManager, makeInternalName, tmuxExec } from '../../src/terminal/tmuxManager.js';
 import { TerminalManager } from '../../src/terminal/terminalManager.js';
 import { createLogger } from '../../src/utils/logger.js';
 
@@ -123,10 +123,31 @@ test('natural shell exit removes the session', async (t) => {
   });
   await manager.init();
   const created = await manager.create({ cols: 80, rows: 24 });
-  execFileSync('tmux', ['send-keys', '-t', created.internalName, 'exit', 'Enter']);
-  await new Promise((resolve) => setTimeout(resolve, 2000));
-  await manager.reconcile();
-  assert.equal(manager.list().length, 0);
+
+  // End the shell the way a user typing `exit` would: the process inside the pane goes away and
+  // tmux removes the session by itself. Driving this with send-keys was unreliable, because the
+  // keystroke is lost when the shell has not started reading input yet, which made the test flaky.
+  const pidResult = await tmuxExec([
+    'display-message',
+    '-p',
+    '-t',
+    created.internalName,
+    '#{pane_pid}',
+  ]);
+  assert.equal(pidResult.ok, true, 'the pane pid must be readable');
+  const shellPid = Number.parseInt(pidResult.stdout.trim(), 10);
+  assert.ok(Number.isInteger(shellPid) && shellPid > 0, 'the pane must have a running shell');
+
+  process.kill(shellPid, 'SIGHUP');
+
+  const deadline = Date.now() + 30_000;
+  let remaining = manager.list().length;
+  while (remaining > 0 && Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    await manager.reconcile();
+    remaining = manager.list().length;
+  }
+  assert.equal(remaining, 0, 'a naturally exited shell must remove the terminal session');
   fs.rmSync(dir, { recursive: true, force: true });
 });
 

@@ -37,7 +37,27 @@ function resolveTunnelPlan(config) {
   return { enabled: true, reason: 'default' };
 }
 
+const MIN_NODE_MAJOR = 24;
+const MIN_NODE_MINOR = 7;
+
+function nodeVersionSatisfied() {
+  const [major, minor] = process.versions.node.split('.').map((part) => Number.parseInt(part, 10));
+  if (major > MIN_NODE_MAJOR) return true;
+  if (major < MIN_NODE_MAJOR) return false;
+  return (minor ?? 0) >= MIN_NODE_MINOR;
+}
+
 async function main() {
+  if (!nodeVersionSatisfied()) {
+    process.stderr.write(
+      `Node.js ${process.versions.node} is too old. This project needs ${MIN_NODE_MAJOR}.${MIN_NODE_MINOR} or newer ` +
+        'for native asynchronous Argon2id.\n' +
+        '  If you use nvm: nvm install 24 && nvm use 24\n' +
+        '  Then re-run: npm start\n',
+    );
+    process.exit(2);
+  }
+
   ensureDir(STATE_DIR);
   const logger = createLogger({ level: process.env.LOG_LEVEL ?? 'info', logFile: path.join(STATE_DIR, 'server.log') });
   logger.info('server_starting', { node: process.version, pid: process.pid });

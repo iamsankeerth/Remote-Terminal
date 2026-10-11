@@ -46,6 +46,21 @@ Notes:
 - `tmux` sessions survive a restart, so a restart only changes the URL.
 - Disable the tunnel with `npm start -- --no-tunnel` (loopback only).
 
+## Quick start
+
+The full walkthrough, including the phone steps and troubleshooting, is in
+[`docs/GETTING-STARTED.md`](docs/GETTING-STARTED.md). In short:
+
+```bash
+cd "/mnt/c/Users/lenovo/Desktop/San/Fun_Projects/Remote Terminal"
+npm install
+npm run build
+npm run setup      # username, a password of 15+ characters, port 8080, quick tunnel = yes
+npm start          # prints a https://…trycloudflare.com URL to open on your phone
+```
+
+Node.js **24.7 or newer** is required. If `node -v` shows something older, run `nvm use 24`.
+
 ## Requirements
 
 | Requirement | Version |
