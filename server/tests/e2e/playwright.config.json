@@ -1,0 +1,14 @@
+{
+  "comment": "Playwright browsers must be installed once with: npx playwright install chromium. Android viewport is emulated; a real Android Chrome smoke test remains a manual step before mobile is claimed as verified.",
+  "testDir": ".",
+  "timeout": 60_000,
+  "use": {
+    "baseURL": "http://127.0.0.1:8080",
+    "viewport": { width: 1280, height: 800 },
+    "trace": "retain-on-failure",
+  },
+  "projects": [
+    { "name": "desktop-chromium", "use": { browserName: "chromium", viewport: { width: 1280, height: 800 } } },
+    { "name": "android-viewport", "use": { browserName: "chromium", viewport: { width: 412, height: 915 }, isMobile: true, hasTouch: true } }
+  ]
+}

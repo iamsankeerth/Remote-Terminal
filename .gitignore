@@ -1,0 +1,27 @@
+# dependencies
+node_modules/
+
+# build output
+dist/
+build/
+client/dist/
+
+# environment and secrets
+.env
+.env.*
+!.env.example
+
+# logs and runtime state
+*.log
+npm-debug.log*
+.DS_Store
+
+# editor and OS
+.idea/
+.vscode/
+*.swp
+
+# playwright
+test-results/
+playwright-report/
+blob-report/

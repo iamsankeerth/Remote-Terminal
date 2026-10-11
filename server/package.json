@@ -1,0 +1,24 @@
+{
+  "name": "@remote-terminal/server",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Native Node.js server for Remote Terminal: HTTP + WebSocket + tmux.",
+  "type": "module",
+  "engines": {
+    "node": "24.7.0"
+  },
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "node --watch src/index.js",
+    "setup": "node src/setup/index.js",
+    "test": "node --test tests/unit/ tests/integration/",
+    "test:unit": "node --test tests/unit/",
+    "test:integration": "node --test tests/integration/",
+    "test:e2e": "node tests/e2e/run-e2e.js"
+  },
+  "dependencies": {
+    "@remote-terminal/shared": "*",
+    "node-pty": "^1.0.0",
+    "ws": "^8.18.0"
+  }
+}
