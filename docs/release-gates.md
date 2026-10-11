@@ -19,9 +19,22 @@ Notes:
   files in parallel makes one file's cleanup destroy another's session.
 - The Playwright suite boots its own isolated server via `tests/e2e/boot-test-server.js`, with its
   own XDG directories and its own owner account, so it never touches the real configuration.
-- `npx playwright install chromium` is required once. On a minimal Ubuntu, Chromium also needs
-  `libnspr4`, `libnss3`, and `libasound2`; `npx playwright install-deps chromium` installs them
-  with sudo.
+- `npx playwright install chromium` is required once. The base WSL Ubuntu image is also missing
+  `libnspr4`, `libnss3`, and `libasound2`, without which Chromium fails with "error while loading
+  shared libraries". Either run `npx playwright install-deps chromium` (needs root), or install
+  them into the home directory without root:
+
+  ```bash
+  bash scripts/install-chromium-deps.sh
+  export LD_LIBRARY_PATH="$HOME/.local/lib/playwright-libs/lib"
+  ```
+
+  The script downloads the three `.deb` packages, extracts them under `~/.local/lib`, and creates
+  the `libasound.so.2` soname link that the runtime package omits.
+- If a test run is interrupted, tmux can leave `tmux-client-<pid>.log` and `tmux-server-<pid>.log`
+  files in the working directory. They are diagnostic output from an abnormally terminated tmux
+  server, not product behaviour: a normal create, attach, detach, kill cycle produces none. They
+  are matched by the `*.log` gitignore rule and are safe to delete.
 
 ## 2. Platform gates
 

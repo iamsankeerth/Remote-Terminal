@@ -37,19 +37,24 @@ fs.mkdirSync(env.XDG_STATE_HOME, { recursive: true });
 
 /**
  * A server left behind by an interrupted run would hold the port and make this boot flaky, so
- * stale instances are cleared first. Our own process and the child we are about to spawn are never
- * targets, and failures are ignored because there may legitimately be nothing to kill.
+ * stale servers are cleared first.
+ *
+ * Only the server pattern is targeted, and both this process and its parent are skipped: Playwright
+ * starts this script through a shell wrapper whose command line also contains the script name, so
+ * matching the script pattern would kill the wrapper and Playwright would report the web server as
+ * having exited early. Failures are ignored because there may be nothing to kill.
  */
-function killStale(pattern) {
+function killStaleServers() {
   let pids = '';
   try {
-    pids = execFileSync('pgrep', ['-f', pattern], { encoding: 'utf8' });
+    pids = execFileSync('pgrep', ['-f', 'node src/index.js'], { encoding: 'utf-8' });
   } catch {
     return;
   }
+  const own = new Set([process.pid, process.ppid]);
   for (const raw of pids.split('\n')) {
     const pid = Number.parseInt(raw.trim(), 10);
-    if (!Number.isInteger(pid) || pid === process.pid) continue;
+    if (!Number.isInteger(pid) || own.has(pid)) continue;
     try {
       process.kill(pid, 'SIGKILL');
     } catch {
@@ -57,8 +62,7 @@ function killStale(pattern) {
     }
   }
 }
-killStale('node src/index.js');
-killStale('node boot-test-server.js');
+killStaleServers();
 await new Promise((resolve) => setTimeout(resolve, 500));
 
 /**
