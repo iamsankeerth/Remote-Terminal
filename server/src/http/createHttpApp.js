@@ -204,6 +204,20 @@ export function createHttpApp(ctx) {
   };
 }
 
+/**
+ * Returns the caller's CSRF token, minting a fresh pre-session cookie when they have none. The
+ * same value is returned to the client and stored in a non HttpOnly cookie, so the login and every
+ * later mutation can be checked with a double submit.
+ */
+function issueCsrfToken(cookies) {
+  const existing = cookies[CSRF_COOKIE];
+  if (typeof existing === 'string' && existing.length > 0) {
+    return { token: existing, headers: undefined };
+  }
+  const token = randomBytes(32).toString('base64url');
+  return { token, headers: { 'set-cookie': [sameSiteCookie(CSRF_COOKIE, token, { httpOnly: false })] } };
+}
+
 function statusForCode(code) {
   switch (code) {
     case HTTP_ERROR_CODES.BAD_REQUEST:
@@ -238,6 +252,14 @@ async function handleApi(ctx, req, res, url) {
   const cookies = parseCookies(req);
   const pathname = url.pathname;
 
+  // The browser client fetches this before logging in to obtain the double-submit token. It is
+  // unauthenticated by design: it only mints the pre-session CSRF cookie and echoes its value.
+  if (req.method === 'GET' && pathname === '/api/auth/csrf') {
+    const issued = issueCsrfToken(cookies);
+    sendJson(res, 200, { csrfToken: issued.token }, issued.headers);
+    return;
+  }
+
   if (req.method === 'POST' && pathname === '/api/auth/login') {
     await handleLogin(ctx, req, res, cookies);
     return;
@@ -249,10 +271,8 @@ async function handleApi(ctx, req, res, url) {
   if (!session) {
     // Issue a pre-session CSRF cookie so the client can complete the double-submit login
     // without any authenticated state.
-    const extraHeaders = cookies[CSRF_COOKIE]
-      ? {}
-      : { 'set-cookie': [sameSiteCookie(CSRF_COOKIE, randomBytes(32).toString('base64url'), { httpOnly: false })] };
-    sendError(res, 401, HTTP_ERROR_CODES.UNAUTHORIZED, 'Authentication required.', undefined, extraHeaders);
+    const issued = cookies[CSRF_COOKIE] ? { headers: undefined } : issueCsrfToken(cookies);
+    sendError(res, 401, HTTP_ERROR_CODES.UNAUTHORIZED, 'Authentication required.', undefined, issued.headers);
     return;
   }
 

@@ -12,6 +12,7 @@ import {
 import { parseClientEnvelope, serverEnvelope } from '@remote-terminal/shared';
 import { PtyBridge, chunkOutput } from '../terminal/ptyBridge.js';
 import { isTunnelRunning, isTunnelOrigin } from '../tunnel/tunnelContext.js';
+import { isClientOverBuffer } from './outputGuard.js';
 
 export function createWebSocketGateway({ server, config, sessions, terminalManager, logger }) {
   const wss = new WebSocketServer({ noServer: true, maxPayload: WS_MAX_MESSAGE_BYTES, perMessageDeflate: false });
@@ -146,15 +147,25 @@ export function createWebSocketGateway({ server, config, sessions, terminalManag
       });
     });
 
-    ws.on('close', () => {
+    ws.on('close', (code) => {
       clearInterval(pingTimer);
-      handleDisconnect(ws, state, 'closed');
+      handleDisconnect(ws, state, closeReason(code));
     });
     ws.on('error', () => {
       clearInterval(pingTimer);
-      handleDisconnect(ws, state, 'error');
+      handleDisconnect(ws, state, 'unexpected');
     });
   });
+
+  /**
+   * A clean close (1000 normal, 1001 going away) means the client deliberately left, which is what
+   * a page reload or tab close produces, so control is released immediately and the owner can
+   * reattach at once. An abnormal close with no code, or an error, is unexpected, so control is
+   * reserved for the control lease window as the PRD requires.
+   */
+  function closeReason(code) {
+    return code === 1000 || code === 1001 ? 'clean' : 'unexpected';
+  }
 
   async function route(ws, state, msg) {
     const session = terminalManager.get(msg.sessionId);
@@ -235,19 +246,19 @@ export function createWebSocketGateway({ server, config, sessions, terminalManag
       rows,
       cwd: terminalManager.homeDir,
       onData: (data) => {
-        state.bufferedBytes += Buffer.byteLength(data, 'utf8');
-        if (state.bufferedBytes > WS_MAX_OUTPUT_BUFFER_BYTES) {
-          // Slow client protection: pause forwarding, detach with a recoverable error, tmux runs on.
+        // Slow client protection: the socket's own buffered amount is the authoritative signal.
+        // Past the limit, forwarding pauses and this client is detached with a recoverable error
+        // while tmux keeps running.
+        if (isClientOverBuffer(ws)) {
           state.bridge?.pause();
           detach(state, { reserved: true, recoverable: true });
-          sendErrorFrame(ws, 'Output buffer exceeded. Detached to protect the host.', WS_ERROR_CODES.NOT_CONTROLLER);
+          sendErrorFrame(ws, 'Output buffer exceeded. Detached to protect the host.', WS_ERROR_CODES.SLOW_CLIENT);
           return;
         }
         for (const chunk of chunkOutput(data)) {
           if (ws.readyState !== 1) return;
           ws.send(JSON.stringify(serverEnvelope('output', { sessionId: session.id, payload: { data: chunk } })));
         }
-        state.bufferedBytes = 0;
       },
       onExit: ({ exitCode, signal, error, detached }) => {
         state.bridge = null;
@@ -327,13 +338,16 @@ export function createWebSocketGateway({ server, config, sessions, terminalManag
       state.bridge?.detach();
       state.bridge = null;
       if (session) {
-          if (reason === 'closed' || reason === 'error') {
+        if (reason === 'unexpected') {
+          // Reserve control for this browser client for the control lease window so another
+          // device cannot take over a session whose owner simply lost connectivity.
           session.leaseUntil = Date.now() + CONTROL_LEASE_SECONDS * 1000;
           session.controllerConnectionId = state.id;
         } else {
           session.controller = null;
           session.controllerId = null;
           session.controllerConnectionId = null;
+          session.leaseUntil = 0;
         }
       }
       state.attachedSessionId = null;
