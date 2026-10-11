@@ -2,8 +2,8 @@
 /**
  * Remote Terminal setup CLI.
  *
- * Interactive, local-only. There is no HTTP setup route. This script validates the host, then
- * collects the owner account, ingress, and resource caps, and writes 0600/0700 XDG files with
+ * Interactive, local-only. There is no HTTP setup route. This script validates the host, collects
+ * the owner account, the ingress mode, and resource caps, and writes 0600/0700 XDG files with
  * atomic replacement. It never installs packages, elevates privileges, or touches Cloudflare.
  */
 import fs from 'node:fs';
@@ -219,7 +219,7 @@ async function main() {
   const config = {
     schemaVersion: CONFIG_SCHEMA_VERSION,
     owner: { username: '', password: null },
-    server: { port: 0, cloudflareOrigin: '' },
+    server: { port: 0, cloudflareOrigin: '', tunnelMode: 'quick' },
     cloudflare: { hostname: '', teamDomain: '', aud: '', ownerEmail: '' },
     limits: { sessions: 1, connections: 1 },
   };
@@ -234,22 +234,45 @@ async function main() {
       return n;
     },
   });
-  const hostname = await ask('Cloudflare hostname (exact public HTTPS origin, e.g. terminal.example.com)', {
+
+  // By default the server deploys a Cloudflare quick tunnel, which needs no Cloudflare account
+  // and no Cloudflare settings. Only the named-tunnel path asks for Cloudflare values.
+  const useQuickTunnel = await ask('Use a Cloudflare quick tunnel, with no Cloudflare account or settings? (yes/no)', {
     validate: (value) => {
-      if (!/^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$/i.test(value)) {
-        throw new ValidationError('Enter a DNS hostname.');
+      const normalized = value.toLowerCase();
+      if (normalized !== 'yes' && normalized !== 'no') {
+        throw new ValidationError('Answer yes or no.');
       }
-      return value;
+      return normalized === 'yes';
     },
   });
-  const teamDomain = await ask('Cloudflare Access team domain (the part before .cloudflareaccess.com)');
-  const aud = await ask('Cloudflare Access Application Audience (AUD)');
-  const ownerEmail = await ask('Pinned owner email used by Cloudflare Access', {
-    validate: (value) => {
-      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value)) throw new ValidationError('Enter an email address.');
-      return value;
-    },
-  });
+
+  let hostname = '';
+  let teamDomain = '';
+  let aud = '';
+  let ownerEmail = '';
+  if (useQuickTunnel) {
+    config.server.tunnelMode = 'quick';
+    stdout.write('  Quick tunnel selected: no Cloudflare account, DNS, or Access setup is needed.\n');
+  } else {
+    config.server.tunnelMode = 'named';
+    hostname = await ask('Cloudflare hostname (exact public HTTPS origin, e.g. terminal.example.com)', {
+      validate: (value) => {
+        if (!/^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$/i.test(value)) {
+          throw new ValidationError('Enter a DNS hostname.');
+        }
+        return value;
+      },
+    });
+    teamDomain = await ask('Cloudflare Access team domain (the part before .cloudflareaccess.com)');
+    aud = await ask('Cloudflare Access Application Audience (AUD)');
+    ownerEmail = await ask('Pinned owner email used by Cloudflare Access', {
+      validate: (value) => {
+        if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value)) throw new ValidationError('Enter an email address.');
+        return value;
+      },
+    });
+  }
   const sessions = await ask(`Terminal Session limit (${SESSION_MIN}-${SESSION_MAX})`, {
     validate: (value) => {
       const n = Number(value);
@@ -272,7 +295,7 @@ async function main() {
   config.owner.username = username;
   config.owner.password = passwordRecord;
   config.server.port = port;
-  config.server.cloudflareOrigin = `https://${hostname}`;
+  config.server.cloudflareOrigin = hostname ? `https://${hostname}` : '';
   config.cloudflare.hostname = hostname;
   config.cloudflare.teamDomain = teamDomain;
   config.cloudflare.aud = aud;
@@ -287,8 +310,14 @@ async function main() {
   fs.chmodSync(path.dirname(CONFIG_PATH), 0o700);
 
   stdout.write(`\nConfiguration written to ${CONFIG_PATH} (0600).\n`);
-  stdout.write('Cloudflare Tunnel and Access provisioning is a manual step: see docs/setup.md.\n');
-  stdout.write(`Start the server with: npm start\n\n`);
+  if (useQuickTunnel) {
+    stdout.write('Remote access: a Cloudflare quick tunnel is deployed automatically on every start.\n');
+    stdout.write('Start the server with: npm start, then open the printed Phone URL.\n');
+  } else {
+    stdout.write('Cloudflare Tunnel and Access provisioning is a manual step: see docs/setup.md.\n');
+    stdout.write(`Start the server with: npm start\n`);
+  }
+  stdout.write('\n');
   rl.close();
 }
 

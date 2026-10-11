@@ -56,7 +56,8 @@ export function TerminalWorkspace() {
           break;
         }
         case 'attached': {
-          if (payload.snapshot) writeOutput(payload.sessionId, payload.snapshot);
+          // The captured viewport arrives as an ordinary output frame right after this.
+          if (payload.snapshot) writeOutput(message.sessionId, payload.snapshot);
           break;
         }
         case 'detached': {

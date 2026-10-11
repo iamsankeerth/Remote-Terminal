@@ -135,6 +135,8 @@ function serveStatic(rootDir, req, res) {
  * @property {import('./utils/logger.js')} logger
  * @property {string} clientDistDir
  * @property {any} assertionValidator
+ * @property {() => boolean} [assertionRequired] returns false while a quick tunnel is running
+ * @property {() => boolean} [tunnelActive] true while a quick tunnel is serving this process
  */
 export function createHttpApp(ctx) {
   return async function handler(req, res) {
@@ -148,12 +150,21 @@ export function createHttpApp(ctx) {
         path: url.pathname,
         ms: Date.now() - startedAt,
       });
-      const originAllowed = ctx.originPolicy.isAllowedRequest({
-        origin: req.headers.origin,
-        host: req.headers.host,
-      });
+      // A request that arrived through the quick tunnel carries Cloudflare headers. Browsers send
+      // no Origin header for top-level navigations and same-origin GETs, and the Host is then the
+      // tunnel hostname rather than loopback, so such requests are accepted as long as any Origin
+      // that *is* present still matches the allowlist. This is sound because the server binds
+      // loopback: only cloudflared can connect, and it forwards nothing but our own tunnel.
+      const viaTunnel = isRemoteRequest(req) && ctx.tunnelActive?.() === true;
+      const originAllowed =
+        viaTunnel && !req.headers.origin
+          ? true
+          : ctx.originPolicy.isAllowedRequest({
+              origin: req.headers.origin,
+              host: req.headers.host,
+            });
       if (!originAllowed) {
-        ctx.logger?.warn('origin_rejected', { requestId, path: url.pathname });
+        ctx.logger?.warn('origin_rejected', { requestId, path: url.pathname, viaTunnel: Boolean(viaTunnel) });
         sendError(res, 403, HTTP_ERROR_CODES.ORIGIN_REJECTED, 'Origin not allowed.');
         return;
       }
@@ -245,7 +256,11 @@ async function handleApi(ctx, req, res, url) {
     return;
   }
 
-  if (isRemoteRequest(req) && ctx.assertionValidator) {
+  // Cloudflare Access is required only when no quick tunnel is serving this process. A request
+  // that carries Cloudflare headers can only have arrived through the tunnel, because the server
+  // binds loopback and nothing else is public. Login, CSRF, and cookies always apply.
+  const assertionRequired = typeof ctx.assertionRequired === 'function' ? ctx.assertionRequired() : true;
+  if (isRemoteRequest(req) && assertionRequired && ctx.assertionValidator) {
     const assertion = req.headers['cf-access-jwt-assertion'];
     const result = await ctx.assertionValidator.validate(typeof assertion === 'string' ? assertion : '');
     if (!result.ok) {

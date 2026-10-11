@@ -7,7 +7,7 @@ export function defaultConfig() {
   return {
     schemaVersion: CONFIG_SCHEMA_VERSION,
     owner: { username: '', password: null },
-    server: { port: 0, cloudflareOrigin: '' },
+    server: { port: 0, cloudflareOrigin: '', tunnelMode: 'quick' },
     cloudflare: { hostname: '', teamDomain: '', aud: '', ownerEmail: '' },
     limits: { sessions: 1, connections: 1 },
   };
@@ -26,6 +26,7 @@ export function normalizeConfig(raw) {
     server: {
       port: Number(input.server?.port ?? base.server.port),
       cloudflareOrigin: String(input.server?.cloudflareOrigin ?? base.server.cloudflareOrigin),
+      tunnelMode: normalizeTunnelMode(input.server?.tunnelMode ?? base.server.tunnelMode),
     },
     cloudflare: {
       hostname: String(input.cloudflare?.hostname ?? base.cloudflare.hostname),
@@ -39,6 +40,12 @@ export function normalizeConfig(raw) {
     },
   };
   return merged;
+}
+
+/** `quick` deploys an ephemeral Cloudflare tunnel on every start (default). `named` means the
+ *  Owner configured a hostname and manages Cloudflare Access manually. */
+export function normalizeTunnelMode(value) {
+  return value === 'named' ? 'named' : 'quick';
 }
 
 export class ConfigStore {

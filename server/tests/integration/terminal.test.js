@@ -322,7 +322,9 @@ async function runLiveFlow({ base, port, dir, terminalManager }) {
   ws.send(JSON.stringify({ v: 1, type: 'attach', sessionId: session.id }));
   const attached = await waitFor((m) => m.type === 'attached');
   assert.equal(attached.sessionId, session.id);
-  assert.equal(typeof attached.payload.snapshot, 'string');
+  assert.equal(attached.payload.cols, 80);
+  assert.equal(attached.payload.rows, 24);
+  assert.equal(typeof attached.payload.controllerConnectionId, 'string');
 
   ws.send(JSON.stringify({ v: 1, type: 'input', sessionId: session.id, payload: { data: 'echo rt-marker-9f3a\n' } }));
   const echoed = await waitFor((m) => m.type === 'output' && (m.payload.data ?? '').includes('rt-marker-9f3a'));

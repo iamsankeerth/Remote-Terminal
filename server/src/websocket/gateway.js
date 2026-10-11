@@ -11,6 +11,7 @@ import {
 } from '@remote-terminal/shared';
 import { parseClientEnvelope, serverEnvelope } from '@remote-terminal/shared';
 import { PtyBridge, chunkOutput } from '../terminal/ptyBridge.js';
+import { isTunnelRunning, isTunnelOrigin } from '../tunnel/tunnelContext.js';
 
 export function createWebSocketGateway({ server, config, sessions, terminalManager, logger }) {
   const wss = new WebSocketServer({ noServer: true, maxPayload: WS_MAX_MESSAGE_BYTES, perMessageDeflate: false });
@@ -32,7 +33,8 @@ export function createWebSocketGateway({ server, config, sessions, terminalManag
         socket.destroy();
         return;
       }
-      // Origin policy: loopback on the configured port and exactly one Cloudflare origin.
+      // Origin policy: loopback on the configured port, the configured Cloudflare origin, or the
+      // live quick tunnel origin when a tunnel is running.
       const origin = req.headers.origin;
       const allowed = await isOriginAllowed(origin, config);
       if (!allowed) {
@@ -57,6 +59,7 @@ export function createWebSocketGateway({ server, config, sessions, terminalManag
 
   function isOriginAllowed(origin, cfg) {
     if (origin === undefined) return true; // non-browser clients (tests) on loopback
+    if (isTunnelRunning() && isTunnelOrigin(origin)) return true;
     try {
       const url = new URL(origin);
       const host = url.hostname;
@@ -84,8 +87,11 @@ export function createWebSocketGateway({ server, config, sessions, terminalManag
     connections.set(ws, state);
     logger.info('ws_connected', { connectionHash: shortHash(connectionId), remote: state.remote });
 
-    // Remote requests additionally present a valid Cloudflare Access assertion during upgrade.
-    if (state.remote && config.cloudflare?.aud) {
+    // Remote requests additionally present a valid Cloudflare Access assertion during upgrade,
+    // unless a quick tunnel is serving this process, in which case the application login remains
+    // the gate. See docs/adr/0004-quick-tunnel-by-default.md.
+    const assertionRequired = appContext.requireAssertion ? appContext.requireAssertion() : true;
+    if (state.remote && assertionRequired && config.cloudflare?.aud) {
       // Validation is asynchronous and fail-closed; deny before any protocol traffic.
       // The validator is provided by the app at construction time.
       pendingRemoteChecks.set(ws, true);
@@ -268,20 +274,17 @@ export function createWebSocketGateway({ server, config, sessions, terminalManag
     session.controllerConnectionId = state.id;
     session.leaseUntil = 0;
 
-    // Restore the current pane viewport only, never historical scrollback.
+    // Confirm the attachment immediately. The captured viewport is then delivered as ordinary
+    // output, so the handshake never waits on a tmux exec and a slow capture cannot stall it.
+    // Restoration covers the current pane viewport only, never historical scrollback.
+    sendFrame(
+      ws,
+      'attached',
+      { sessionId: session.id, cols, rows, controllerConnectionId: state.id },
+      session.id,
+    );
     terminalManager.tmux.captureVisible(session.id).then((snapshot) => {
-      sendFrame(
-        ws,
-        'attached',
-        {
-          sessionId: session.id,
-          cols,
-          rows,
-          controllerConnectionId: state.id,
-          snapshot: String(snapshot ?? ''),
-        },
-        session.id,
-      );
+      if (snapshot) sendFrame(ws, 'output', { data: snapshot }, session.id);
     });
 
     logger.info('terminal_session_attached', {

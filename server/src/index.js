@@ -1,7 +1,8 @@
 /**
  * Remote Terminal server entry point.
  *
- * Binds loopback only. Cloudflare provides remote ingress; see docs/setup.md.
+ * Binds loopback only. Remote access is a Cloudflare quick tunnel by default; see
+ * docs/adr/0004-quick-tunnel-by-default.md. Use --no-tunnel or TUNNEL=0 for loopback only.
  */
 import path from 'node:path';
 import fs from 'node:fs';
@@ -19,10 +20,22 @@ import { hashClientIdentity, CloudflareAssertionValidator } from './auth/cloudfl
 import { TerminalManager } from './terminal/terminalManager.js';
 import { createHttpServer, closeHttpServer } from './http/createHttpApp.js';
 import { createWebSocketGateway } from './websocket/gateway.js';
+import { QuickTunnelManager } from './tunnel/tunnelManager.js';
+import * as tunnelContext from './tunnel/tunnelContext.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 // server/src -> server -> repo root -> client/dist
 const clientDist = path.resolve(here, '../../client/dist');
+
+/** Tunnel is on by default. `--no-tunnel` and `TUNNEL=0` suppress it; `--tunnel` forces it. */
+function resolveTunnelPlan(config) {
+  const argv = process.argv.slice(2);
+  if (argv.includes('--no-tunnel') || process.env.TUNNEL === '0') return { enabled: false, reason: 'suppressed' };
+  if (argv.includes('--tunnel') || process.env.TUNNEL === '1') return { enabled: true, reason: 'forced' };
+  const mode = config?.server?.tunnelMode ?? 'quick';
+  if (mode === 'named') return { enabled: false, reason: 'named-tunnel-configured' };
+  return { enabled: true, reason: 'default' };
+}
 
 async function main() {
   ensureDir(STATE_DIR);
@@ -75,6 +88,8 @@ async function main() {
     clientDistDir: clientDist,
     assertionValidator,
     hashClientIdentity,
+    assertionRequired: () => !tunnelContext.isTunnelRunning(),
+    tunnelActive: () => tunnelContext.isTunnelRunning(),
   });
 
   const gateway = createWebSocketGateway({
@@ -85,8 +100,9 @@ async function main() {
     logger,
   });
   gateway.appContext.assertionValidator = assertionValidator;
+  gateway.appContext.requireAssertion = () => !tunnelContext.isTunnelRunning();
 
-  // Loopback only. Cloudflare Tunnel connects to this address; no other listener is opened.
+  // Loopback only. The tunnel connects to this address; no other listener is opened.
   await new Promise((resolve, reject) => {
     httpServer.once('error', reject);
     httpServer.listen(config.server.port, '127.0.0.1', () => {
@@ -97,11 +113,36 @@ async function main() {
   const address = httpServer.address();
   logger.info('server_listening', { host: '127.0.0.1', port: address.port, origin: config.server.cloudflareOrigin });
 
+  // Cloudflare quick tunnel: deployed by default. Suppress with --no-tunnel or TUNNEL=0.
+  const tunnelPlan = resolveTunnelPlan(config);
+  let tunnel = null;
+  if (tunnelPlan.enabled) {
+    tunnel = new QuickTunnelManager(address.port, { logger });
+    tunnel.onStateChange((state, url) => {
+      if (state === 'running' && url) {
+        originPolicy.addRuntimeOrigin(url);
+        tunnelContext.setActiveTunnel(url);
+        printTunnelBanner(url);
+        logger.info('tunnel_ready', { url });
+        return;
+      }
+      const previous = tunnelContext.getTunnelOrigin();
+      if (previous) originPolicy.removeRuntimeOrigin(previous);
+      tunnelContext.clearActiveTunnel();
+      if (state === 'error') {
+        logger.warn('tunnel_error', {});
+        process.stdout.write('  Tunnel:    failed to start (server still reachable on loopback)\n');
+      }
+    });
+    tunnel.start();
+  }
+
   let shuttingDown = false;
   const shutdown = async (signal) => {
     if (shuttingDown) return;
     shuttingDown = true;
     logger.info('server_stopping', { signal });
+    tunnel?.stop();
     sessions.revokeAll();
     gateway.close();
     terminalManager.broadcast = null;
@@ -112,14 +153,28 @@ async function main() {
   process.on('SIGINT', () => void shutdown('SIGINT'));
   process.on('SIGTERM', () => void shutdown('SIGTERM'));
 
-  stdoutMessage(config);
+  stdoutMessage(config, tunnelPlan);
 }
 
-function stdoutMessage(config) {
-  process.stdout.write(
+function stdoutMessage(config, tunnelPlan) {
+  let out =
     `Remote Terminal listening on http://127.0.0.1:${config.server.port}\n` +
-      `Remote origin: ${config.server.cloudflareOrigin}\n` +
-      `Sessions: ${terminalCount(config)}\n`,
+    `Sessions: ${terminalCount(config)}\n`;
+  if (tunnelPlan?.enabled) {
+    out += '  Tunnel:    starting Cloudflare quick tunnel...\n';
+  } else {
+    out += '  Tunnel:    disabled (loopback only)\n';
+  }
+  process.stdout.write(out);
+}
+
+/** Prints the phone URL as soon as cloudflared reports it. */
+function printTunnelBanner(url) {
+  process.stdout.write(
+    `\n  Phone URL: ${url}\n` +
+      '  Open it on any device and sign in with your owner username and password.\n' +
+      '  This URL is temporary and changes every time the server restarts.\n' +
+      '  Anyone with this URL can reach the login screen: use a strong password.\n\n',
   );
 }
 

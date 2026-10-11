@@ -119,3 +119,22 @@ test('csrf double submit is compared in constant time', async () => {
   assert.ok(!csrfMatches({ cookieValue: 'abc', headerValue: 'abd' }));
   assert.ok(!csrfMatches({ cookieValue: 'abc', headerValue: undefined }));
 });
+
+test('runtime origins can be added and removed for a quick tunnel', async () => {
+  const { OriginPolicy } = await import('../../src/auth/origin.js');
+  const policy = new OriginPolicy({ port: 8080, cloudflareOrigin: 'https://terminal.example.com' });
+  assert.ok(!policy.allow('https://calm-words-1234.trycloudflare.com'));
+
+  const added = policy.addRuntimeOrigin('https://calm-words-1234.trycloudflare.com');
+  assert.equal(added, 'https://calm-words-1234.trycloudflare.com');
+  assert.ok(policy.allow('https://calm-words-1234.trycloudflare.com'));
+  assert.ok(policy.allow('https://terminal.example.com'), 'the configured origin is unaffected');
+
+  assert.equal(policy.removeRuntimeOrigin('https://calm-words-1234.trycloudflare.com'), true);
+  assert.ok(!policy.allow('https://calm-words-1234.trycloudflare.com'));
+
+  // The configured origin is never dropped by runtime cleanup.
+  assert.equal(policy.removeRuntimeOrigin('https://terminal.example.com'), false);
+  assert.ok(policy.allow('https://terminal.example.com'));
+  assert.equal(policy.addRuntimeOrigin('not a url'), null);
+});

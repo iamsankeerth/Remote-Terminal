@@ -49,6 +49,24 @@ export class OriginPolicy {
   }
 
   /**
+   * Accepts an origin for this process only. Used for the ephemeral Cloudflare quick tunnel URL,
+   * which cannot be known at startup. Nothing is written to disk.
+   */
+  addRuntimeOrigin(origin) {
+    const normalized = normalizeOrigin(origin);
+    if (!normalized) return null;
+    this.allowed.add(normalized);
+    return normalized;
+  }
+
+  removeRuntimeOrigin(origin) {
+    const normalized = normalizeOrigin(origin);
+    if (!normalized) return false;
+    if (normalized === this.cloudflareOrigin) return false; // never drop the configured origin
+    return this.allowed.delete(normalized);
+  }
+
+  /**
    * Requests with no Origin header (curl, tests, same-machine tooling) are only allowed when the
    * Host is loopback. Any request that *does* present an Origin must match the allowlist.
    */
