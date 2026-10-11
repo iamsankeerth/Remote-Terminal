@@ -57,6 +57,15 @@ async function main() {
     logger.error('config_invalid', { reason: 'port_missing' });
     process.exit(2);
   }
+  // A configuration without a password hash would start a server that rejects every login with no
+  // explanation, and in tunnel mode would publish that dead end. Refuse to start instead.
+  if (!config.owner || !config.owner.password) {
+    logger.error('setup_incomplete', { reason: 'owner_password_missing', hint: 'run: npm run setup' });
+    process.stderr.write(
+      'No owner password is configured, so no one could sign in. Run: npm run setup\n',
+    );
+    process.exit(2);
+  }
 
   const originPolicy = new OriginPolicy({ port: config.server.port, cloudflareOrigin: config.server.cloudflareOrigin });
   const sessions = new SessionStore();
