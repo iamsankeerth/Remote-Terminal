@@ -113,6 +113,9 @@ async function main() {
   const address = httpServer.address();
   logger.info('server_listening', { host: '127.0.0.1', port: address.port, origin: config.server.cloudflareOrigin });
 
+  // Record the pid so `npm run change-password` and `npm run revoke-sessions` can signal us.
+  writePidFile();
+
   // Cloudflare quick tunnel: deployed by default. Suppress with --no-tunnel or TUNNEL=0.
   const tunnelPlan = resolveTunnelPlan(config);
   let tunnel = null;
@@ -146,12 +149,34 @@ async function main() {
     sessions.revokeAll();
     gateway.close();
     terminalManager.broadcast = null;
+    removePidFile();
     await closeHttpServer(httpServer);
     logger.info('server_stopped', {});
     process.exit(0);
   };
   process.on('SIGINT', () => void shutdown('SIGINT'));
   process.on('SIGTERM', () => void shutdown('SIGTERM'));
+  // PRD v1.2 section 6.3: a local password change or global revocation signals the running
+  // process, which re-reads its configuration and revokes every Login Session.
+  // PRD v1.2 section 6.3: a local password change or global revocation signals the running
+  // process, which re-reads its configuration and revokes every Login Session.
+  process.on('SIGHUP', () => {
+    const reloaded = store.load();
+    if (reloaded) {
+      // The HTTP layer and gateway hold this object by reference, so mutating it in place takes
+      // effect immediately without re-creating the server.
+      config.owner.username = reloaded.owner.username;
+      config.owner.password = reloaded.owner.password;
+      config.limits.sessions = reloaded.limits.sessions;
+      config.limits.connections = reloaded.limits.connections;
+      config.server.cloudflareOrigin = reloaded.server.cloudflareOrigin;
+      config.server.tunnelMode = reloaded.server.tunnelMode;
+      logger.info('config_reloaded', {});
+    }
+    const revoked = sessions.revokeAll();
+    logger.info('sessions_revoked', { revoked });
+    process.stdout.write(`Reloaded configuration and revoked ${revoked} login session(s).\n`);
+  });
 
   stdoutMessage(config, tunnelPlan);
 }
@@ -180,6 +205,24 @@ function printTunnelBanner(url) {
 
 function terminalCount(config) {
   return config.limits?.sessions ?? 0;
+}
+
+const PID_PATH = path.join(STATE_DIR, 'server.pid');
+
+function writePidFile() {
+  try {
+    fs.writeFileSync(PID_PATH, `${process.pid}\n`, { mode: 0o600 });
+  } catch {
+    /* the CLI falls back to "changes apply on next start" */
+  }
+}
+
+function removePidFile() {
+  try {
+    if (fs.readFileSync(PID_PATH, 'utf8').trim() === String(process.pid)) fs.unlinkSync(PID_PATH);
+  } catch {
+    /* already gone */
+  }
 }
 
 main().catch((error) => {
