@@ -16,6 +16,9 @@ client/dist/
 npm-debug.log*
 .DS_Store
 
+# reference projects cloned for study, not part of this repository
+TermPilot-main/
+
 # editor and OS
 .idea/
 .vscode/

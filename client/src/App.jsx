@@ -11,19 +11,20 @@ export function App() {
   useEffect(() => {
     let cancelled = false;
     const check = async () => {
+      // Fetch the CSRF token up front so the first mutation never has to wait for it.
+      await api.ensureCsrf();
       try {
         const status = await api.systemStatus();
         if (!cancelled) {
           setServerUp(true);
-          if (status.csrfToken) api.setCsrfToken?.(status.csrfToken);
         }
+        void status;
       } catch {
         if (!cancelled) setServerUp(false);
       }
       try {
-        const me = await api.me();
+        await api.me();
         if (!cancelled) setAuthenticated(true);
-        void me;
       } catch {
         if (!cancelled) setAuthenticated(false);
       }

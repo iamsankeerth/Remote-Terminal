@@ -11,14 +11,20 @@
     "start": "node src/index.js",
     "dev": "node --watch src/index.js",
     "setup": "node src/setup/index.js",
-    "test": "node --test tests/unit/ tests/integration/",
-    "test:unit": "node --test tests/unit/",
-    "test:integration": "node --test tests/integration/",
-    "test:e2e": "node tests/e2e/run-e2e.js"
+    "change-password": "node src/cli/password.js",
+    "revoke-sessions": "node src/cli/password.js --revoke-only",
+    "benchmark": "node scripts/benchmark-echo.js",
+    "test": "node --test --test-concurrency=1 \"tests/unit/*.test.js\" \"tests/integration/*.test.js\"",
+    "test:unit": "node --test --test-concurrency=1 \"tests/unit/*.test.js\"",
+    "test:integration": "node --test --test-concurrency=1 \"tests/integration/*.test.js\"",
+    "test:e2e": "playwright test -c tests/e2e/playwright.config.js"
   },
   "dependencies": {
     "@remote-terminal/shared": "*",
     "node-pty": "^1.0.0",
     "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.49.0"
   }
 }

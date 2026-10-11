@@ -161,12 +161,32 @@ input {
   display: none;
 }
 
+.extra-keys.collapsed {
+  display: flex;
+  justify-content: flex-start;
+}
+
+.extra-keys.collapsed .extra-key:not(.toggle-collapse) {
+  display: none;
+}
+
 .extra-keys button {
   min-width: 44px;
   min-height: 40px;
   font-size: 15px;
   font-family: var(--font-mono);
   flex: 0 0 auto;
+}
+
+.extra-keys .extra-key.toggle-active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+
+.extra-keys .toggle-collapse {
+  min-width: 34px;
+  color: var(--text-dim);
 }
 
 .status-pill {

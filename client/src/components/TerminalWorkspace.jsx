@@ -13,6 +13,7 @@ export function TerminalWorkspace() {
   const [fontSize, setFontSize] = useState(prefs.fontSize);
   const [scrollback, setScrollback] = useState(prefs.scrollback);
   const [toolbarVisible, setToolbarVisible] = useState(prefs.toolbarVisible);
+  const [toolbarCollapsed, setToolbarCollapsed] = useState(false);
   const [sessions, setSessions] = useState([]);
   const [activeId, setActiveId] = useState(null);
   const [managerOpen, setManagerOpen] = useState(false);
@@ -244,7 +245,9 @@ export function TerminalWorkspace() {
         ) : null}
       </main>
 
-      {toolbarVisible ? <ExtraKeys onSend={sendSpecial} /> : null}
+      {toolbarVisible ? (
+        <ExtraKeys onSend={sendSpecial} collapsed={toolbarCollapsed} onToggleCollapsed={setToolbarCollapsed} />
+      ) : null}
 
       {wsState === 'reconnecting' ? (
         <div style={{ padding: 8 }} className="notice" role="status">

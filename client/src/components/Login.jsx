@@ -60,7 +60,7 @@ export function Login({ onAuthenticated }) {
         <button className="primary" type="submit" disabled={busy}>
           {busy ? 'Signing in…' : 'Sign in'}
         </button>
-        <p className="badge">Cloudflare Access protects remote access. Sessions are host-only, HTTP-only, SameSite=Strict cookies.</p>
+        <p className="badge">Sessions use host-only, HTTP-only, SameSite=Strict cookies. Remote access is protected by Cloudflare.</p>
       </form>
     </div>
   );

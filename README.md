@@ -88,8 +88,16 @@ skips every Cloudflare prompt.
 
 ```bash
 npm test              # unit and integration (node --test)
-npm run test:e2e      # Playwright browser workflows (requires a running server)
+npm run test:e2e      # Playwright browser workflows (starts its own isolated server)
+npm run benchmark     # local echo latency against the 150 ms P95 gate
 ```
+
+## Release status
+
+`docs/release-gates.md` records every gate from PRD v1.2 section 10.5: what is automated and
+passing, what has been measured, and the four gates that still need a human or real hardware (a
+physical Android device, bare-metal Ubuntu 24.04, real Cloudflare staging, and a long-running
+session survival check).
 
 ## Security posture
 

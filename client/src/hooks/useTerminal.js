@@ -12,6 +12,14 @@ import '@xterm/xterm/css/xterm.css';
  */
 const registry = new Map();
 
+/**
+ * Output that arrives before React has committed the terminal's DOM host is kept here and flushed
+ * on mount, so a reconnect or reload never loses the opening snapshot or the first bytes.
+ */
+const pending = new Map();
+
+const MAX_PENDING_BYTES = 1024 * 1024;
+
 export function getTerminal(sessionId) {
   return registry.get(sessionId) ?? null;
 }
@@ -34,18 +42,34 @@ export function ensureTerminal(sessionId, host, { fontSize, scrollback, onData, 
     term.onData((data) => onData?.(data));
     term.onResize(({ cols, rows }) => onResize?.({ cols, rows }));
   }
-  if (host && entry.term.element.parentElement !== host) {
-    term_attach(entry, host);
+  if (host) {
+    mountTerminal(entry, host);
   }
+  flushPending(sessionId);
   scheduleFit(entry);
   return entry;
 }
 
-function term_attach(entry, host) {
-  if (entry.term.element.parentElement) {
-    entry.term.element.parentElement.removeChild(entry.term.element);
+/**
+ * Attaches an xterm instance to a DOM host. `open` may only be called once per terminal, so an
+ * already-open instance is moved into the new host instead (this is what lets a tab switch keep
+ * the same terminal instance alive).
+ */
+function mountTerminal(entry, host) {
+  const element = entry.term.element;
+  if (!element) {
+    entry.term.open(host);
+    entry.ready = true;
+    entry.term.focus();
+    return;
   }
-  host.appendChild(entry.term.element);
+  if (element.parentElement === host) {
+    entry.ready = true;
+    entry.term.focus();
+    return;
+  }
+  element.parentElement?.removeChild(element);
+  host.appendChild(element);
   entry.ready = true;
   entry.term.focus();
 }
@@ -65,12 +89,27 @@ export function disposeTerminal(sessionId) {
   if (!entry) return;
   entry.term.dispose();
   registry.delete(sessionId);
+  pending.delete(sessionId);
 }
 
 export function writeOutput(sessionId, data) {
   const entry = registry.get(sessionId);
-  if (!entry) return;
+  if (!entry || !entry.ready) {
+    const buffered = (pending.get(sessionId) ?? '') + data;
+    // Bound the buffer the same way the server bounds its own output buffer.
+    pending.set(sessionId, buffered.slice(-MAX_PENDING_BYTES));
+    return;
+  }
   entry.term.write(data);
+}
+
+/** Writes anything buffered for a session once its terminal is mounted. */
+function flushPending(sessionId) {
+  const buffered = pending.get(sessionId);
+  if (!buffered) return;
+  pending.delete(sessionId);
+  const entry = registry.get(sessionId);
+  if (entry?.ready) entry.term.write(buffered);
 }
 
 export function focusTerminal(sessionId) {
