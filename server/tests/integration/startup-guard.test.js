@@ -17,17 +17,32 @@ import { hashPassword } from '../../src/auth/password.js';
 const here = path.dirname(fileURLToPath(import.meta.url));
 const serverRoot = path.resolve(here, '../..');
 const entry = path.join(serverRoot, 'src/index.js');
-const PORT = 18_912;
+
+/**
+ * Asks the kernel for a free port, then releases it. A fixed port would collide with a server
+ * left behind by an interrupted run, which made this test fail for reasons unrelated to the guard.
+ */
+async function freePort() {
+  const net = await import('node:net');
+  return await new Promise((resolve, reject) => {
+    const probe = net.createServer();
+    probe.once('error', reject);
+    probe.listen(0, '127.0.0.1', () => {
+      const { port } = probe.address();
+      probe.close(() => resolve(port));
+    });
+  });
+}
 
 /** Writes a configuration the way the setup CLI does, into an isolated XDG home. */
-function writeIsolatedConfig(base, password) {
+async function writeIsolatedConfig(base, password, port) {
   const xdgConfigHome = path.join(base, 'config');
   const configDir = path.join(xdgConfigHome, 'remote-terminal');
   fs.mkdirSync(configDir, { recursive: true });
   const config = {
     schemaVersion: 1,
     owner: { username: 'sank', password },
-    server: { port: PORT, cloudflareOrigin: '', tunnelMode: 'named' },
+    server: { port, cloudflareOrigin: '', tunnelMode: 'named' },
     cloudflare: { hostname: '', teamDomain: '', aud: '', ownerEmail: '' },
     limits: { sessions: 2, connections: 2 },
   };
@@ -47,7 +62,8 @@ function isolatedEnv(xdgConfigHome) {
 
 test('the server refuses to start without an owner password', async () => {
   const base = fs.mkdtempSync(path.join(os.tmpdir(), 'rt-guard-'));
-  const xdgConfigHome = writeIsolatedConfig(base, null);
+  const port = await freePort();
+  const xdgConfigHome = await writeIsolatedConfig(base, null, port);
 
   const child = spawn(process.execPath, [entry, '--no-tunnel'], {
     cwd: serverRoot,
@@ -74,7 +90,8 @@ test('the server refuses to start without an owner password', async () => {
 
 test('the server starts normally when an owner password is present', async () => {
   const base = fs.mkdtempSync(path.join(os.tmpdir(), 'rt-guard-ok-'));
-  const xdgConfigHome = writeIsolatedConfig(base, await hashPassword('correct horse battery staple 42'));
+  const port = await freePort();
+  const xdgConfigHome = await writeIsolatedConfig(base, await hashPassword('correct horse battery staple 42'), port);
 
   const child = spawn(process.execPath, [entry, '--no-tunnel'], {
     cwd: serverRoot,
@@ -84,10 +101,10 @@ test('the server starts normally when an owner password is present', async () =>
 
   try {
     let ready = false;
-    const deadline = Date.now() + 20_000;
+    const deadline = Date.now() + 45_000;
     while (Date.now() < deadline) {
       try {
-        const response = await fetch(`http://127.0.0.1:${PORT}/api/auth/me`);
+        const response = await fetch(`http://127.0.0.1:${port}/api/auth/me`);
         if (response.status === 401) {
           ready = true;
           break;

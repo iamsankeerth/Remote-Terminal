@@ -17,6 +17,10 @@ Notes:
 
 - Integration tests share one tmux server, so they run with `--test-concurrency=1`. Running the
   files in parallel makes one file's cleanup destroy another's session.
+- The WSL wall clock has been observed to jump backward by ~81 seconds under load. Any test that
+  asserts on token expiry must therefore use margins far larger than that (the Cloudflare tests use
+  an hour in the future and a fixed date in 2001), never "a few seconds ago". Production tokens
+  carry lifetimes measured in hours, so the same jumps are irrelevant there.
 - The Playwright suite boots its own isolated server via `tests/e2e/boot-test-server.js`, with its
   own XDG directories and its own owner account, so it never touches the real configuration.
 - `npx playwright install chromium` is required once. The base WSL Ubuntu image is also missing

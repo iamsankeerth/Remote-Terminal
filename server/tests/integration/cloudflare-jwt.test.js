@@ -109,7 +109,10 @@ test('a valid Access assertion is accepted and the request is served', async (t)
     const payload = {
       iss: 'https://myteam.cloudflareaccess.com',
       aud: ['aud-test'],
-      exp: nowSeconds + 600,
+      // Wide margins: this environment's wall clock has been observed to jump backward by ~81 s
+      // (WSL virtualization), so a token that is only just expired can appear valid. The expired
+      // case uses a fixed date in 2001 and the valid case an hour in the future.
+      exp: nowSeconds + 3600,
       type: 'app',
       email: 'you@example.com',
       ...claims,
@@ -136,7 +139,7 @@ test('a valid Access assertion is accepted and the request is served', async (t)
     assert.equal(wrongEmail.status, 403, 'a different email must be rejected');
 
     const expired = await fetch(`${harness.base}/api/auth/me`, {
-      headers: { ...CLOUDFLARE_HEADERS, cookie: cookieHeader, 'cf-access-jwt-assertion': mint({ exp: nowSeconds - 10 }) },
+      headers: { ...CLOUDFLARE_HEADERS, cookie: cookieHeader, 'cf-access-jwt-assertion': mint({ exp: 1_000_000_000 }) },
     });
     assert.equal(expired.status, 403, 'an expired assertion must be rejected');
 
