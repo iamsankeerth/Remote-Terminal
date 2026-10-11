@@ -70,6 +70,13 @@ export class TmuxManager {
       throw new Error(`tmux new-session failed: ${result.stderr.trim()}`);
     }
     await tmux(['set-option', '-t', name, 'history-limit', '5000']);
+    // The status bar steals a row from the pane and leaks the internal session name into the UI,
+    // so app-owned sessions do not show it. Applies to sessions created from here on; pre-existing
+    // sessions keep the bar until recreated.
+    await tmux(['set-option', '-t', name, 'status', 'off']);
+    // Size the shared window to the largest attached client instead of the smallest, so a wide
+    // browser tab is not clamped to a narrow local terminal (or vice versa without notice).
+    await tmux(['set-option', '-t', name, 'aggressive-resize', 'on']);
     return name;
   }
 
@@ -143,6 +150,35 @@ export class TmuxManager {
       file: 'tmux',
       args: ['attach-session', '-t', this.internalName(id)],
     };
+  }
+
+  /**
+   * Forces the shared window to the given size. Unlike attach-session, resize-window accepts
+   * explicit dimensions on tmux 3.4. Best effort: returns false instead of throwing when the
+   * session is gone.
+   */
+  async resizeWindow({ id, cols, rows }) {
+    const result = await tmux([
+      'resize-window',
+      '-t',
+      this.internalName(id),
+      '-x',
+      String(cols),
+      '-y',
+      String(rows),
+    ]);
+    return result.ok;
+  }
+
+  /**
+   * Lists the ttys currently attached to the session. Used to detect foreign clients (for
+   * example a local terminal attached alongside the browser) so the UI can say so instead of
+   * showing a mysteriously clamped display. Returns [] when nobody is attached.
+   */
+  async listClients(id) {
+    const result = await tmux(['list-clients', '-t', this.internalName(id), '-F', '#{client_tty}']);
+    if (!result.ok) return [];
+    return result.stdout.split('\n').map((line) => line.trim()).filter(Boolean);
   }
 }
 

@@ -175,7 +175,10 @@ export function createWebSocketGateway({ server, config, sessions, terminalManag
         if (state.attachedSessionId) {
           return sendErrorFrame(ws, 'Already attached to a session.', WS_ERROR_CODES.ALREADY_ATTACHED);
         }
-        attach(ws, state, session, { takeover: false });
+        attach(ws, state, session, { takeover: false, payload: msg.payload }).catch((error) => {
+          logger.error('ws_attach_error', { errorName: error?.name });
+          sendErrorFrame(ws, 'Internal error.', WS_ERROR_CODES.INTERNAL);
+        });
         return;
       }
       case 'takeover': {
@@ -184,7 +187,10 @@ export function createWebSocketGateway({ server, config, sessions, terminalManag
         if (state.attachedSessionId && state.attachedSessionId !== session.id) {
           return sendErrorFrame(ws, 'Detach before taking over another session.', WS_ERROR_CODES.ALREADY_ATTACHED);
         }
-        attach(ws, state, session, { takeover: true });
+        attach(ws, state, session, { takeover: true, payload: msg.payload }).catch((error) => {
+          logger.error('ws_attach_error', { errorName: error?.name });
+          sendErrorFrame(ws, 'Internal error.', WS_ERROR_CODES.INTERNAL);
+        });
         return;
       }
       case 'detach': {
@@ -216,7 +222,7 @@ export function createWebSocketGateway({ server, config, sessions, terminalManag
     }
   }
 
-  function attach(ws, state, session, { takeover }) {
+  async function attach(ws, state, session, { takeover, payload }) {
     const existing = session.controllerConnectionId;
     if (existing && existing !== state.id) {
       if (!takeover) {
@@ -235,9 +241,17 @@ export function createWebSocketGateway({ server, config, sessions, terminalManag
       }
     }
 
-    const cols = 80;
-    const rows = 24;
-    const { file, args } = terminalManager.tmux.attachArgs({ id: session.id, cols, rows });
+    // Use the client's fitted dimensions (validated by parseClientEnvelope when present) instead
+    // of a fixed size, so full-screen TUIs draw a layout that matches the actual viewport.
+    const dims = payload ?? {};
+    const cols = Number.isInteger(dims.cols) ? dims.cols : 80;
+    const rows = Number.isInteger(dims.rows) ? dims.rows : 24;
+    // Count attached clients before our own attach pty spawns, so every entry here is foreign
+    // (for example a local terminal). The UI reports it instead of showing a clamped display.
+    const foreignClients = await terminalManager.tmux.listClients(session.id).catch(() => []);
+    // attachArgs takes only the id: the pty spawned below carries cols/rows itself, which is what
+    // sizes the tmux client (tmux 3.4 rejects size flags on attach-session).
+    const { file, args } = terminalManager.tmux.attachArgs({ id: session.id });
     state.bufferedBytes = 0;
     const bridge = new PtyBridge({
       file,
@@ -288,10 +302,13 @@ export function createWebSocketGateway({ server, config, sessions, terminalManag
     // Confirm the attachment immediately. The captured viewport is then delivered as ordinary
     // output, so the handshake never waits on a tmux exec and a slow capture cannot stall it.
     // Restoration covers the current pane viewport only, never historical scrollback.
+    // Note: the window is NOT forced here with resize-window. tmux follows a newly attached
+    // client automatically, while an explicit resize-window would freeze the size and ignore all
+    // later client resizes.
     sendFrame(
       ws,
       'attached',
-      { sessionId: session.id, cols, rows, controllerConnectionId: state.id },
+      { sessionId: session.id, cols, rows, controllerConnectionId: state.id, foreignClients: foreignClients.length },
       session.id,
     );
     terminalManager.tmux.captureVisible(session.id).then((snapshot) => {

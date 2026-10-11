@@ -75,6 +75,30 @@ test('webSocket envelopes are validated strictly', () => {
   );
 });
 
+test('attach and takeover accept optional dimensions using the resize rule', () => {
+  // Bare attach keeps working for older clients.
+  const bare = parseClientEnvelope(JSON.stringify({ v: 1, type: 'attach', sessionId: 'a' }), 65536);
+  assert.equal(bare.type, 'attach');
+  // Fitted dimensions travel with the attach.
+  const sized = parseClientEnvelope(
+    JSON.stringify({ v: 1, type: 'attach', sessionId: 'a', payload: { cols: 230, rows: 60 } }),
+    65536,
+  );
+  assert.deepEqual(sized.payload, { cols: 230, rows: 60 });
+  assert.throws(
+    () => parseClientEnvelope(JSON.stringify({ v: 1, type: 'attach', sessionId: 'a', payload: { cols: 0, rows: 24 } }), 65536),
+    ValidationError,
+  );
+  assert.throws(
+    () => parseClientEnvelope(JSON.stringify({ v: 1, type: 'attach', sessionId: 'a', payload: { cols: 80 } }), 65536),
+    ValidationError,
+  );
+  assert.throws(
+    () => parseClientEnvelope(JSON.stringify({ v: 1, type: 'attach', sessionId: 'a', payload: { cols: 80.5, rows: 24 } }), 65536),
+    ValidationError,
+  );
+});
+
 test('oversized webSocket messages are rejected', () => {
   const big = 'x'.repeat(70000);
   assert.throws(() => parseClientEnvelope(JSON.stringify({ v: 1, type: 'input', sessionId: 'a', payload: { data: big } }), 65536), ValidationError);

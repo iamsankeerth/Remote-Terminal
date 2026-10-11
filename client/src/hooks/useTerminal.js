@@ -116,6 +116,25 @@ export function focusTerminal(sessionId) {
   registry.get(sessionId)?.term.focus();
 }
 
+/**
+ * Fits the terminal to its host and returns its real dimensions, so the client can tell the
+ * server its actual size up front instead of attaching at a guess. Returns null when the
+ * terminal is not mounted yet; callers then attach without dimensions and the later
+ * resize-on-fit syncs the server.
+ */
+export function getTerminalSize(sessionId) {
+  const entry = registry.get(sessionId);
+  if (!entry) return null;
+  try {
+    entry.fit.fit();
+  } catch {
+    return null;
+  }
+  const { cols, rows } = entry.term;
+  if (!Number.isInteger(cols) || !Number.isInteger(rows) || cols <= 0 || rows <= 0) return null;
+  return { cols, rows };
+}
+
 /** Refits a single terminal, or all of them when no id is given. */
 export function fitAll(sessionId) {
   if (sessionId) {
@@ -156,6 +175,7 @@ export function useResizeHandler(activeSessionId) {
 
 export default {
   getTerminal,
+  getTerminalSize,
   ensureTerminal,
   disposeTerminal,
   writeOutput,

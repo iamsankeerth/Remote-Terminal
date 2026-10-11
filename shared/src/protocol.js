@@ -123,17 +123,36 @@ export function parseClientEnvelope(rawText, maxBytes) {
       if (payload.data.length > 8192) throw new ValidationError('input chunk too large', 'bad_message');
       break;
     }
+    case 'attach':
+    case 'takeover': {
+      // Client dimensions are optional so older clients that send a bare attach keep working.
+      // When present they must be valid, using the same rule as resize.
+      assertDims(payload);
+      break;
+    }
     case 'resize': {
-      const { cols, rows } = payload;
-      if (![cols, rows].every((n) => Number.isInteger(n) && n > 0 && n <= 1000)) {
-        throw new ValidationError('payload.cols/rows must be integers in 1..1000.', 'bad_message');
-      }
+      assertDims(payload, true);
       break;
     }
     default:
       break;
   }
   return msg;
+}
+
+/**
+ * Validates terminal dimensions. `required` rejects a missing pair (resize); otherwise the pair
+ * is optional but must be valid when present (attach, takeover).
+ */
+function assertDims(payload, required = false) {
+  const { cols, rows } = payload;
+  if (cols === undefined && rows === undefined) {
+    if (required) throw new ValidationError('payload.cols/rows must be integers in 1..1000.', 'bad_message');
+    return;
+  }
+  if (![cols, rows].every((n) => Number.isInteger(n) && n > 0 && n <= 1000)) {
+    throw new ValidationError('payload.cols/rows must be integers in 1..1000.', 'bad_message');
+  }
 }
 
 /** Builds a server envelope. Never includes secrets. */

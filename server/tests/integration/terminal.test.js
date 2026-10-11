@@ -58,6 +58,56 @@ test('tmux manager creates, lists, and kills namespaced sessions', async (t) => 
   assert.equal(await tmux.exists(id), false);
 });
 
+test('created sessions hide the status bar, prefer the largest client, and report clients', async (t) => {
+  await cleanupNamespace();
+  if (!harborHasTmux()) {
+    t.skip('tmux is not installed');
+    return;
+  }
+  const tmux = new TmuxManager({ namespace: 'rt-test-' });
+  const id = makeInternalName().replace(/^rt1/, 'x');
+  const created = await tmux.create({ id, cwd: os.tmpdir(), cols: 80, rows: 24 });
+  try {
+    const status = await tmuxExec(['show-options', '-t', created, '-v', 'status']);
+    assert.equal(status.stdout.trim(), 'off');
+    const aggressive = await tmuxExec(['show-options', '-t', created, '-v', 'aggressive-resize']);
+    assert.equal(aggressive.stdout.trim(), 'on');
+    assert.deepEqual(await tmux.listClients(id), []);
+
+    // A second client needs a real pty to register with tmux (a control-mode attach without a
+    // tty exits immediately and never appears in list-clients), so spawn one via node-pty.
+    const { default: nodePty } = await import('node-pty');
+    const extra = nodePty.spawn('tmux', ['attach-session', '-t', created], {
+      name: 'xterm-256color',
+      cols: 80,
+      rows: 24,
+      cwd: os.tmpdir(),
+      env: process.env,
+    });
+    try {
+      let clients = [];
+      const deadline = Date.now() + 5000;
+      while (Date.now() < deadline) {
+        clients = await tmux.listClients(id);
+        if (clients.length >= 1) break;
+        await new Promise((resolve) => setTimeout(resolve, 100));
+      }
+      assert.equal(clients.length, 1);
+    } finally {
+      try {
+        extra.kill();
+      } catch {
+        /* already gone */
+      }
+    }
+
+    assert.ok(await tmux.resizeWindow({ id, cols: 120, rows: 40 }));
+    assert.deepEqual(await tmux.displaySize(id), { cols: 120, rows: 40 });
+  } finally {
+    await tmux.kill(id);
+  }
+});
+
 test('external tmux sessions are never managed', async (t) => {
   await cleanupNamespace();
   if (!harborHasTmux()) {
@@ -343,9 +393,11 @@ async function runLiveFlow({ base, port, dir, terminalManager }) {
   ws.send(JSON.stringify({ v: 1, type: 'attach', sessionId: session.id }));
   const attached = await waitFor((m) => m.type === 'attached');
   assert.equal(attached.sessionId, session.id);
+  // Bare attach keeps the 80x24 fallback for older clients.
   assert.equal(attached.payload.cols, 80);
   assert.equal(attached.payload.rows, 24);
   assert.equal(typeof attached.payload.controllerConnectionId, 'string');
+  assert.equal(attached.payload.foreignClients, 0);
 
   ws.send(JSON.stringify({ v: 1, type: 'input', sessionId: session.id, payload: { data: 'echo rt-marker-9f3a\n' } }));
   const echoed = await waitFor((m) => m.type === 'output' && (m.payload.data ?? '').includes('rt-marker-9f3a'));
@@ -353,8 +405,8 @@ async function runLiveFlow({ base, port, dir, terminalManager }) {
 
   ws.send(JSON.stringify({ v: 1, type: 'resize', sessionId: session.id, payload: { cols: 100, rows: 30 } }));
   await new Promise((resolve) => setTimeout(resolve, 400));
-  // tmux reserves one line for its status bar, so the window is one row shorter than the client.
-  assert.deepEqual(await terminalManager.tmux.displaySize(session.id), { cols: 100, rows: 29 });
+  // App sessions hide the tmux status bar, so the window matches the client exactly.
+  assert.deepEqual(await terminalManager.tmux.displaySize(session.id), { cols: 100, rows: 30 });
 
   // A second device must take over explicitly.
   const ws2 = new WebSocket(`ws://127.0.0.1:${port}/ws/terminal`, { headers: { cookie: cookieHeader } });
@@ -400,6 +452,24 @@ async function runLiveFlow({ base, port, dir, terminalManager }) {
   ws2.send(JSON.stringify({ v: 1, type: 'detach', sessionId: session.id }));
   await waitForOn(ws2, frames2, (m) => m.type === 'detached', 4000);
   assert.equal(await terminalManager.tmux.exists(session.id), true);
+
+  // Re-attach with explicit dimensions: the server must use them, not the 80x24 fallback.
+  ws2.send(JSON.stringify({ v: 1, type: 'attach', sessionId: session.id, payload: { cols: 120, rows: 40 } }));
+  const reattached = await waitForOn(ws2, frames2, (m) => m.type === 'attached', 6000);
+  assert.equal(reattached.payload.cols, 120);
+  assert.equal(reattached.payload.rows, 40);
+  assert.equal(typeof reattached.payload.foreignClients, 'number');
+  {
+    // resize-window runs fire-and-forget on the server, so poll for the forced size.
+    let size = null;
+    const deadline = Date.now() + 5000;
+    while (Date.now() < deadline) {
+      size = await terminalManager.tmux.displaySize(session.id);
+      if (size && size.cols === 120 && size.rows === 40) break;
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    assert.deepEqual(size, { cols: 120, rows: 40 });
+  }
 
   const terminated = await fetch(`${base}/api/sessions/${session.id}`, {
     method: 'DELETE',

@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import api from '../services/api.js';
 import { loadPrefs, savePrefs } from '../services/prefs.js';
 import { useTerminalSocket } from '../hooks/useTerminalSocket.js';
-import { getTerminal, writeOutput, focusTerminal } from '../hooks/useTerminal.js';
+import { getTerminal, getTerminalSize, writeOutput, focusTerminal } from '../hooks/useTerminal.js';
 import ConnectionStatus from './ConnectionStatus.jsx';
 import SessionManager from './SessionManager.jsx';
 import TerminalView from './TerminalView.jsx';
@@ -59,6 +59,12 @@ export function TerminalWorkspace() {
         case 'attached': {
           // The captured viewport arrives as an ordinary output frame right after this.
           if (payload.snapshot) writeOutput(message.sessionId, payload.snapshot);
+          if (Number.isInteger(payload.foreignClients) && payload.foreignClients > 0) {
+            setTakeoverNotice(
+              'Another terminal is attached to this session — the display follows it. ' +
+                'Detach it (Ctrl+b, d) for a clean view.',
+            );
+          }
           break;
         }
         case 'detached': {
@@ -89,28 +95,31 @@ export function TerminalWorkspace() {
   sendRef.current = send;
 
   // Attach to the active session whenever the socket is open and the selection changes.
+  // The terminal is fitted first and its real dimensions travel with the attach, so full-screen
+  // TUIs draw a layout that matches the viewport instead of an 80x24 guess. When the terminal is
+  // not mounted yet the attach goes without dimensions and the resize-on-fit syncs the server.
   useEffect(() => {
     if (!activeId) return undefined;
     if (state !== 'connected') return undefined;
     const timer = setTimeout(() => {
-      sendRef.current?.('attach', activeId);
+      const size = getTerminalSize(activeId);
+      sendRef.current?.('attach', activeId, size ?? undefined);
       focusTerminal(activeId);
     }, 50);
     return () => clearTimeout(timer);
   }, [activeId, state]);
 
   const createSession = async () => {
-    const term = document.querySelector('.terminal-container')?.getBoundingClientRect();
-    const cols = 80;
-    const rows = 24;
+    // New tmux windows start at the current container size when a tab is already open.
+    const size = activeId ? getTerminalSize(activeId) : null;
+    const cols = size?.cols ?? 80;
+    const rows = size?.rows ?? 24;
     try {
       const { session } = await api.createSession(undefined, cols, rows);
       await refresh();
       setActiveId(session.id);
     } catch (err) {
       setTakeoverNotice(err.message);
-    } finally {
-      void term;
     }
   };
 
